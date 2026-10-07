@@ -301,10 +301,32 @@ function makeDecalAtlas(layer) {
 // Wound / bandage / belly-hole textures (256 px each, kept in a map by kind).
 function makeWoundTextures() {
   const out = {};
+  // Every wound is cut to an irregular, soft-edged blob silhouette (and drawn with alphaTest), so no square or
+  // rectangular patch edge can ever show on the skin. rx/ry: half extents of the blob; jit: how wobbly its rim is.
+  const MASK = {
+    cut: { rx: 126, ry: 62, jit: 0.05 },
+    cutDeep: { rx: 126, ry: 62, jit: 0.05 },
+    stab: { rx: 82, ry: 82, jit: 0.1 },
+    blunt: { rx: 118, ry: 108, jit: 0.16 },
+    burn: { rx: 114, ry: 114, jit: 0.07 },
+    bandage: { rx: 124, ry: 124, jit: 0.04 },
+    belly: { rx: 126, ry: 126, jit: 0.03 },
+  };
   const make = (name, fn) => {
     const c = mkCanvas(256, 256);
     const g = c.getContext('2d');
-    fn(g, mulberry(name.length * 31 + 5));
+    const rng = mulberry(name.length * 31 + 5);
+    fn(g, rng);
+    const m = MASK[name] || { rx: 118, ry: 118, jit: 0.1 };
+    g.save();
+    g.globalCompositeOperation = 'destination-in';
+    g.translate(128, 128);
+    g.scale(1, m.ry / m.rx);
+    g.translate(-128, -128);
+    g.fillStyle = '#ffffff';
+    pathSmooth(g, blobPts(128, 128, m.rx, 16, m.jit, mulberry(name.length * 7 + 11)));
+    g.fill();
+    g.restore();
     out[name] = canvasTex(c);
   };
   const INK = '#3a0510';
@@ -1168,12 +1190,12 @@ export function init(game) {
     if (p.w > 0.001) {
       vec3 d = vNPos - p.xyz;
       if (d.y < 0.0) d.y *= 0.55;
-      float r = (0.04 + 0.08 * p.w) * uStainK;
-      wsCov = max(wsCov, r * (0.5 + 0.8 * wsN) - length(d));
+      float r = (0.03 + 0.065 * p.w) * uStainK;
+      wsCov = max(wsCov, r * (0.82 + 0.36 * wsN) - length(d));
     }
   }
-  float wsM = step(0.0, wsCov) * uGoreOn;
-  float wsRim = wsM * (1.0 - step(0.012 * uStainK, wsCov));
+  float wsM = smoothstep(0.0, 0.006 * uStainK, wsCov) * uGoreOn;
+  float wsRim = wsM * (1.0 - smoothstep(0.008 * uStainK, 0.016 * uStainK, wsCov));
   vec3 wsBlood = vec3(0.5, 0.012, 0.04);
   diffuseColor.rgb = mix(diffuseColor.rgb, wsBlood, wsM * 0.92);
   diffuseColor.rgb = mix(diffuseColor.rgb, wsBlood * 0.5, wsRim * 0.85);
@@ -1272,17 +1294,20 @@ export function init(game) {
     return q.multiply(new Q().setFromAxisAngle(ZAX, angle));
   }
 
+  let woundSeq = 0;
   function woundMaterial(tk, clean) {
+    // alpha-tested, depth-writing decal (no blending, so no transparency-sorting artifacts); newer wounds get a
+    // slightly stronger polygon offset so overlapping ones layer cleanly instead of z-fighting
     const m = new THREE.MeshToonMaterial({
       map: woundTex[tk],
-      transparent: true,
-      depthWrite: false,
+      transparent: false,
+      alphaTest: 0.4,
+      depthWrite: true,
       side: THREE.DoubleSide,
       gradientMap: toonGradient(),
       polygonOffset: true,
-      polygonOffsetFactor: -4,
-      polygonOffsetUnits: -4,
-      opacity: 0,
+      polygonOffsetFactor: -4 - (woundSeq++ % 8) * 0.6,
+      polygonOffsetUnits: -4 - (woundSeq % 8),
     });
     if (tk === 'blunt') m.color.setHex(0xff9aa8);
     m.emissive.setHex(clean ? 0x302010 : tk === 'burn' ? 0x120806 : 0x300810);
@@ -1987,7 +2012,6 @@ export function init(game) {
     const t = now();
     for (const w of wounds) {
       const age = t - w.born;
-      w.mat.opacity = clamp(age / 0.12, 0, 1);
       w.mesh.visible = (w.clean ? !on : on) && (melt[w.seg] || 0) < 0.32;
       if (w.bruise) {
         const u = clamp(age / 5, 0, 1);
@@ -2123,6 +2147,7 @@ export function init(game) {
     sfx,
     surfaceAt,
     bodyCenter,
+    cleanFX,
     get bellyOpened() {
       return belly.opened;
     },

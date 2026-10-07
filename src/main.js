@@ -78,7 +78,6 @@ async function boot() {
         coins: game.coins.balance,
         standing: r.standing,
         limp: r.limp,
-        armPosed: r.armPosed,
         fps: +game.fps.toFixed(1),
         props: game.props.size,
         severed,

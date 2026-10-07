@@ -139,16 +139,17 @@ const fmt = (s) => `pelvis y=${s.bodies.pelvis.p[1]} head y=${s.bodies.head.p[1]
       await shot('crest_regrown');
     },
 
-    async thumbs() {
+    async calm() {
+      // after a slap and a few calm seconds he just stands there with the teary face (no thumbs-up any more)
       await ev(() => { TS.reset(); TS.tool('slap'); TS.advance(1.5); });
       const h = await ev(() => TS.ndc('head', [0, 0.05, 0.5]));
-      await ev(([x, y]) => { TS.click(x, y, 0.02); TS.advance(3.4); }, [h.x, h.y]);
-      await shot('thumbs_up');
-      await ev(() => TS.advance(0.7));
-      await shot('thumbs_up_hold');
+      await ev(([x, y]) => { TS.click(x, y, 0.02); TS.advance(5); }, [h.x, h.y]);
+      await shot('calm_teary');
+      await ev(() => TS.advance(3));
+      await shot('calm_teary_later');
       const s = await state();
-      console.log('  armPosed=', s.armPosed, fmt(s));
-      if (!s.armPosed) errors.push('thumbs: arm was not posed after 4 s of calm');
+      console.log('  ', fmt(s));
+      if (!s.standing) errors.push('calm: not standing after the calm beat');
     },
 
     async reset() {

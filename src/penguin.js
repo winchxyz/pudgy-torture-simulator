@@ -29,7 +29,7 @@ export const PENGU = {
     blood: 0xd01830,
   },
   // Toon ramp (brightness of each band). Soft: the bands are close together so colors read flat.
-  toonSteps: [0.6, 0.78, 0.92, 1.0],
+  toonSteps: [0.74, 0.85, 0.94, 1.0],
   outline: { ratio: 0.008, min: 0.0055, max: 0.0105 }, // ink thickness = ratio * part size, clamped
   light: { ambient: 1.05, key: 1.7, keyPos: [2.5, 4, 4.5], fill: 0.3, fillPos: [-4, 1.5, 2] },
 
@@ -72,15 +72,15 @@ export const PENGU = {
   },
   arm: { radius: 0.095, upper: 0.2, fore: 0.19, flat: 0.74 }, // flat: z thickness of the paddle flippers
   hand: { rx: 0.09, ry: 0.112, rz: 0.06, y: -0.04 },
-  thumb: { radius: 0.034, length: 0.05, base: [0.075, -0.04, 0.0] },
   // Head: the dome of the same bell. Origin of the head frame = the neck pivot (world y torso.neckY).
   head: { top: 0.795 },
   eye: { x: 0.235, y: 0.38, rx: 0.063, ry: 0.083 }, // head-frame y of the eye line
   beak: { y: 0.31, z: 0.4, rx: 0.085, ry: 0.065, rz: 0.14, oz: 0.08, rxLow: 0.07, ryLow: 0.045 }, // pivot at the beak root
   crest: { y: 0.78, z: 0.06 },
-  face: { canvasW: 1536, w: 0.84, h: 0.66, cy: 0.4 }, // face decal (head-frame units) and canvas width in px
+  // Conformal face patch on the body's own front: front angle +-phi (radians), WORLD heights y0..y1; the canvas is drawn in
+  // head-frame units (x = arc length, y up) around cy.
+  face: { canvasW: 1536, phi: 0.86, y0: 1.07, y1: 1.52, w: 0.877, h: 0.45, cy: 0.345 },
   skull: { warmLo: 0.62, warmHi: 0.9 }, // warm-grey shadow tint range of the skull (lighting factor)
-  // Thumbs-up gag: the flipper mesh stretches and the tip grows (poses set the amounts).
   // Rapier collider hints (segment-frame center, half extents of the inner box, rounding radius).
   colliders: {
     head: { frame: 'head', center: [0, 0.4, 0], half: [0.32, 0.24, 0.29], r: 0.18 },
@@ -136,19 +136,20 @@ const smooth01 = (a, b, x) => {
 
 const leanAt = (y) => PENGU.body.lean * smooth01(0.3, 1.5, y);
 
-// One crest feather: a flat teardrop that grows along +y and bends (bx: sideways, bz: forward) toward its tip.
-// Closed solid so the ink hull works.
-function featherGeometry(len, width, bx, bz) {
-  const prof = [[0, -0.014], [0.028, 0.0], [0.042, 0.025], [0.045, 0.055], [0.04, 0.08], [0.027, 0.098], [0.012, 0.108], [0, 0.111]];
-  const k = len / 0.111;
-  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r * width, y * k)), 14);
+// One crest lobe: a plump, rounded, egg-shaped petal (a little narrower toward its tip) growing along +y from its base at
+// the origin. Closed solid, round in cross-section (so it reads in 3D from above and the side), so the ink hull works.
+function lobeGeometry(len, rx, rz, bz) {
+  const g = new THREE.SphereGeometry(1, 28, 20);
   g.deleteAttribute('uv');
+  g.deleteAttribute('normal');
   const p = g.getAttribute('position');
   for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
     const y = p.getY(i);
-    const u = Math.max(0, y / len);
-    p.setX(i, p.getX(i) + bx * u * u);
-    p.setZ(i, p.getZ(i) * 0.55 + bz * u * u);
+    const z = p.getZ(i);
+    const t = (y + 1) / 2; // 0 at the base, 1 at the tip
+    const k = 1 - 0.38 * t * t;
+    p.setXYZ(i, x * rx * k, t * len, z * rz * k + bz * t * t);
   }
   const m = mergeVertices(g, 1e-6);
   m.computeVertexNormals();
@@ -166,7 +167,8 @@ function drawFace(ctx, CW, CH, expr, blink) {
   const Y = (y) => CH / 2 - y * k;
   const R = (r) => r * k;
   const ey = E.y - F.cy; // eye line in decal space
-  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = '#ffffff'; // opaque: the patch is a piece of the body, not an overlay
+  ctx.fillRect(0, 0, CW, CH);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = INK_HEX;
@@ -220,7 +222,7 @@ function drawFace(ctx, CW, CH, expr, blink) {
       for (const s of sides) {
         const ex = s * E.x;
         // tear streams running down the cheeks
-        for (const [dx, len, w] of [[-0.012, 0.2, 0.034], [0.022, 0.15, 0.024]]) {
+        for (const [dx, len, w] of [[-0.012, 0.165, 0.034], [0.022, 0.125, 0.024]]) {
           const x0 = ex + s * 0.012 + dx;
           const grad = ctx.createLinearGradient(0, Y(ey - 0.05), 0, Y(ey - 0.05 - len));
           grad.addColorStop(0, 'rgba(150, 224, 255, 0.85)');
@@ -342,15 +344,6 @@ const POSES = {
   idle: {
     L: { shoulder: [-0.32, 0, 0.42], elbow: [-0.3, 0, 0.0], hip: [0, 0, 0.05] },
     life: 1,
-  },
-  thumbsUp: {
-    L: { shoulder: [0, -0.2, 1.42], elbow: [0, 0, 0.0], hip: [0, 0, 0.05] },
-    R: { shoulder: [-0.32, 0, -0.42], elbow: [-0.3, 0, 0], hip: [0, 0, -0.05] },
-    C: { torso: [0, 0.1, -0.03], head: [0, -0.12, 0.05] },
-    thumb: [1, 0],
-    stretch: [2.4, 1],
-    fist: [2.2, 1],
-    life: 0.5,
   },
   tpose: {
     L: { shoulder: [0, 0, Math.PI / 2], hip: [0, 0, 0.06] },
@@ -478,6 +471,9 @@ vNPos = position;
 }
 `;
 const WM_FRAG_HEAD = `
+#ifndef WM_END
+#define WM_END 1.0
+#endif
 uniform float uMelt; uniform float uMeltSize; uniform float uTime;
 varying vec3 vNPos;
 ${WM_NOISE}
@@ -491,7 +487,7 @@ if (uMelt > 0.001) {
   vec3 mp = vNPos / uMeltSize * 2.0;
   // smooth dissolve mask (large soft blobs, no camo noise)
   float nn = wmN(mp * 2.2) * 0.65 + wmN(mp * 5.0) * 0.35;
-  float dis = clamp((uMelt - WM_START) / (1.0 - WM_START), 0.0, 1.0);
+  float dis = clamp((uMelt - WM_START) / (WM_END - WM_START), 0.0, 1.0);
   float thr = dis * 1.1;
   if (dis > 0.0 && nn < thr) discard;
   #if defined(WM_SKIN) || defined(WM_FLESH) || defined(WM_ORGAN)
@@ -532,12 +528,12 @@ const WM_FRAG_END = `
   vec3 vN = normalize(vNormal);
   vec3 vV = normalize(vViewPosition);
   float lit = dot(outgoingLight, vec3(0.3333)) / max(dot(diffuseColor.rgb, vec3(0.3333)), 1e-3);
-  outgoingLight *= mix(vec3(0.88, 0.94, 1.04), vec3(1.0), smoothstep(0.62, 1.0, lit));
+  outgoingLight *= mix(vec3(0.94, 0.97, 1.02), vec3(1.0), smoothstep(0.62, 1.0, lit));
   float rim = pow(1.0 - clamp(dot(vN, vV), 0.0, 1.0), 3.2);
-  outgoingLight += vec3(0.42, 0.62, 1.0) * rim * 0.16 * (1.0 - wmWet);
+  outgoingLight += vec3(0.42, 0.62, 1.0) * rim * 0.12 * (1.0 - wmWet);
   vec3 vH = normalize(vV + normalize(vec3(-0.25, 0.7, 0.65)));
-  float gl = smoothstep(0.945, 0.99, dot(vN, vH));
-  outgoingLight = mix(outgoingLight, vec3(1.0), gl * 0.22 * (1.0 - wmWet));
+  float gl = smoothstep(0.972, 0.996, dot(vN, vH));
+  outgoingLight += vec3(0.55, 0.62, 0.75) * gl * 0.08 * (1.0 - wmWet);
 }
 #endif
 #include <opaque_fragment>
@@ -555,6 +551,117 @@ function patchSkin(mat, kind, U, noShape = false) {
   return mat;
 }
 
+
+// The one-piece skinned body (head + torso + pelvis, 3 bones): the same melt / dissolve / vinyl look, but the melt amount,
+// gravity and segment extents are blended per vertex from the skin weights (bone 0 = pelvis, 1 = torso, 2 = head), and
+// the melt displacement happens in bind space BEFORE skinning (skinning_vertex comes after begin_vertex). The seam strips
+// (a duplicated ring pair at the waist and neck) are discarded while that joint is severed.
+const WMB_VERT_HEAD = `
+uniform vec3 uMeltV; uniform vec3 uSegMinP; uniform vec3 uSegMinT; uniform vec3 uSegMinH;
+uniform vec3 uSegMaxP; uniform vec3 uSegMaxT; uniform vec3 uSegMaxH;
+uniform vec3 uDirP; uniform vec3 uDirT; uniform vec3 uDirH;
+uniform float uMeltSize; uniform float uTime; uniform float uInset;
+varying vec3 vNPos;
+varying float vMeltB;
+${WM_NOISE}
+`;
+const WMB_SEGFN = `
+float wmSeg(float k) {
+  float s = 0.0;
+  if (abs(skinIndex.x - k) < 0.5) s += skinWeight.x;
+  if (abs(skinIndex.y - k) < 0.5) s += skinWeight.y;
+  if (abs(skinIndex.z - k) < 0.5) s += skinWeight.z;
+  if (abs(skinIndex.w - k) < 0.5) s += skinWeight.w;
+  return s;
+}
+`;
+const WMB_VERT_BODY = `
+#include <begin_vertex>
+vNPos = position;
+{
+  float wP = wmSeg(0.0);
+  float wT = wmSeg(1.0);
+  float wH = wmSeg(2.0);
+  float m = wP * uMeltV.x + wT * uMeltV.y + wH * uMeltV.z;
+  vMeltB = m;
+  transformed -= normal * uInset;
+  if (m > 0.001) {
+    vec3 gw = normalize(uDirP * wP + uDirT * wT + uDirH * wH);
+    vec3 ld = normalize(transpose(mat3(skinMatrix)) * (transpose(mat3(modelMatrix)) * gw));
+    vec3 q = transformed;
+    vec3 sMin = uSegMinP * wP + uSegMinT * wT + uSegMinH * wH;
+    vec3 sMax = uSegMaxP * wP + uSegMaxT * wT + uSegMaxH * wH;
+    vec3 a0 = ld * sMin;
+    vec3 a1 = ld * sMax;
+    float d0 = min(a0.x, a1.x) + min(a0.y, a1.y) + min(a0.z, a1.z);
+    float d1 = max(a0.x, a1.x) + max(a0.y, a1.y) + max(a0.z, a1.z);
+    float H = max(d1 - d0, 0.05);
+    float h = clamp((dot(q, ld) - d0) / H, 0.0, 1.0);
+    float asym = 0.7 + 0.6 * wmN(q * 2.0 / uMeltSize);
+    float slump = m * H * 0.6 * pow(1.0 - h, 1.3) * asym;
+    vec3 perp = transformed - ld * dot(transformed, ld);
+    transformed += perp * (m * 0.3 * smoothstep(0.25, 1.0, h));
+    transformed += ld * slump;
+    transformed += normal * (wmN(q * 3.0 / uMeltSize) - 0.5) * m * uMeltSize * 0.1;
+    {
+      vec3 cq = q / (uMeltSize * 0.45);
+      vec3 ci = floor(cq);
+      vec3 cf = fract(cq);
+      float hh = wmH(ci + 7.0);
+      vec3 cen = vec3(wmH(ci + 1.0), wmH(ci + 2.0), wmH(ci + 3.0)) * 0.6 + 0.2;
+      float ph = fract(uTime * 0.35 + hh);
+      float sz = (hh > 0.45 ? 1.0 : 0.0) * smoothstep(0.0, 0.8, ph) * (1.0 - smoothstep(0.86, 0.9, ph));
+      float bump = smoothstep(0.32, 0.0, distance(cf, cen)) * sz * smoothstep(0.1, 0.5, m);
+      transformed += normal * bump * uMeltSize * 0.16;
+    }
+  }
+}
+`;
+const WMB_FRAG_HEAD = `
+#ifndef WM_END
+#define WM_END 1.0
+#endif
+uniform float uMelt; uniform float uMeltSize; uniform float uTime; uniform float uCutW; uniform float uCutN;
+uniform sampler2D uFaceMap;
+varying vec3 vNPos;
+varying float vMeltB;
+#define uMelt vMeltB
+${WM_NOISE}
+`;
+const WMB_FRAG_BODY =
+  `
+#ifdef WM_SKIN
+{
+  // The face (eyes, tears, blush, expressions) is drawn into a small opaque texture covering the front angle +-WM_FPHI
+  // between heights WM_FY0..WM_FY1, and composited here onto the body's own surface by its bind-pose position, so it
+  // is conformal: it can never float, clip or z-fight, and it melts, stains and skins with the body.
+  float fy = vNPos.y;
+  float flean = WM_LEAN * smoothstep(0.3, 1.5, fy);
+  float fd = atan(vNPos.x, (vNPos.z - flean) / WM_D);
+  float fu = fd / WM_FPHI * 0.5 + 0.5;
+  float fv = (fy - WM_FY0) / (WM_FY1 - WM_FY0);
+  float fe = smoothstep(0.0, 0.03, min(min(fu, 1.0 - fu), min(fv, 1.0 - fv)));
+  if (fe > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uFaceMap, vec2(fu, fv)).rgb, fe);
+}
+#endif
+if (uCutW > 0.5 && abs(vNPos.y - WM_WY) < 0.006) discard;
+if (uCutN > 0.5 && abs(vNPos.y - WM_NY) < 0.006) discard;
+` + WM_FRAG_BODY;
+
+function patchBody(mat, kind, U, seams, face) {
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U);
+    const defs = `#define WM_${kind}\n#define WM_BODY\n#define WM_START ${(kind === 'INK' ? 0.1 : WM_START[kind]).toFixed(2)}\n#define WM_END ${(kind === 'INK' ? 0.45 : 1.0).toFixed(2)}\n#define WM_WY ${seams[0].toFixed(4)}\n#define WM_NY ${seams[1].toFixed(4)}\n#define WM_FPHI ${face.phi.toFixed(4)}\n#define WM_FY0 ${face.y0.toFixed(4)}\n#define WM_FY1 ${face.y1.toFixed(4)}\n#define WM_D ${face.depth.toFixed(4)}\n#define WM_LEAN ${face.lean.toFixed(4)}\n`;
+    sh.vertexShader =
+      defs +
+      WMB_VERT_HEAD +
+      sh.vertexShader.replace('#include <skinning_pars_vertex>', '#include <skinning_pars_vertex>\n' + WMB_SEGFN).replace('#include <begin_vertex>', WMB_VERT_BODY);
+    sh.fragmentShader = defs + WMB_FRAG_HEAD + sh.fragmentShader.replace('#include <color_fragment>', WMB_FRAG_BODY).replace('#include <opaque_fragment>', WM_FRAG_END);
+  };
+  // gore.js finds skin by this prefix and chains its blood-stain patch onto onBeforeCompile
+  mat.customProgramCacheKey = () => (kind === 'SKIN' ? 'wm-SKIN-body' : 'wmb-' + kind);
+  return mat;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Geometry builders
@@ -611,9 +718,14 @@ function makePear(profile) {
   };
   // Lathe outline between y0 and y1. Flat caps only where asked (interior seams stay open: the neighbouring mesh
   // overlaps them, and the stump seals a severed end), so no hidden disc can z-fight with the skin.
-  const slice = (y0, y1, capLo = true, capHi = true) => {
+  const slice = (y0, y1, capLo = true, capHi = true, dups = []) => {
     const out = capLo ? [new THREE.Vector2(0, y0), new THREE.Vector2(rAt(y0), y0)] : [new THREE.Vector2(rAt(y0), y0)];
-    for (const [y, r] of pts) if (y > y0 + 1e-4 && y < y1 - 1e-4) out.push(new THREE.Vector2(r, y));
+    const mid = [];
+    for (const [y, r] of pts) if (y > y0 + 1e-4 && y < y1 - 1e-4) mid.push([y, r]);
+    // a ring pair straddling each seam (0.0002 apart): the skin can be torn there when a joint is severed
+    for (const d of dups) mid.push([d - 1e-4, rAt(d - 1e-4)], [d + 1e-4, rAt(d + 1e-4)]);
+    mid.sort((a, b) => a[0] - b[0]);
+    for (const [y, r] of mid) out.push(new THREE.Vector2(r, y));
     out.push(new THREE.Vector2(rAt(y1), y1));
     if (capHi) out.push(new THREE.Vector2(0, y1));
     return out;
@@ -625,8 +737,8 @@ function makePear(profile) {
 // bell (pelvis / torso / head) shade identically across their seams. depth scales z. UVs: u runs around the body
 // (0.5 is the front, the seam is at the back), v is the WORLD height over the whole bell, so every slice samples
 // the same mask texture. The result is translated down by frameY (into its joint's frame).
-function pearGeometry(pear, y0, y1, depth, frameY, capLo = true, capHi = true, segs = 128, rs = null) {
-  const prof = pear.slice(y0, y1, capLo, capHi);
+function pearGeometry(pear, y0, y1, depth, frameY, capLo = true, capHi = true, segs = 128, rs = null, dups = []) {
+  const prof = pear.slice(y0, y1, capLo, capHi, dups);
   if (rs) for (const v of prof) v.x *= rs(v.y);
   const rf = rs ? (y) => pear.rAt(y) * rs(y) : pear.rAt;
   const g = new THREE.LatheGeometry(prof, segs, Math.PI, Math.PI * 2);
@@ -1006,31 +1118,14 @@ export function createPengu(options = {}) {
   const D = C.body.depth;
   const WYw = T.waistY; // world y of the waist seam
   const NYw = T.neckY; // world y of the neck seam
-  const TAIL = T.tail;
   const torsoY = C.pelvisY + T.y; // world y of the torso pivot
   const WY = WYw - torsoY; // torso-frame waist seam
   const NYt = NYw - torsoY; // torso-frame neck seam
   const waistR = pear.rAt(WYw);
   const neckR = pear.rAt(NYw);
-  const clamp01 = (v) => Math.min(1, Math.max(0, v));
-  // Each shell is full radius up to its seam plane and tucks in (to 86%) over the overlap beyond it, so when a joint
-  // bends the swung-out rim sits inside the neighbouring skin instead of flaring out as a slab. At rest the tucked
-  // part is hidden inside the neighbour's full-radius skin.
-  const tuck = (d) => 1 - 0.14 * smooth01(0, TAIL, d);
 
   // -------------------------------------------------------------------------------- pelvis / legs
   const pelvis = joint('pelvis', root, 0, C.pelvisY, 0);
-  {
-    // The lower belly is the pelvis mesh (visible, so the waist can be severed). It overlaps the torso mesh by TAIL
-    // (identical surface there); its ink hull fades out over the overlap so no ring pokes out of the neighbour.
-    const g = pearGeometry(pear, pear.yMin, WYw + TAIL, D, C.pelvisY, true, false, 128, (y) => tuck(y - WYw));
-    part('pelvis', g, base.body, pelvis, {
-      seg: 'pelvis',
-      hullMode: 'normals',
-      hullScale: (y) => 1 - clamp01((y + C.pelvisY - WYw) / TAIL),
-    });
-  }
-
   for (const [sx, S] of [[1, 'L'], [-1, 'R']]) {
     const hip = joint('hip' + S, pelvis, sx * C.hip.x, C.hip.y, 0);
     const leg = joint('leg' + S, hip);
@@ -1041,19 +1136,7 @@ export function createPengu(options = {}) {
     part('foot' + S, footGeometry(C.foot, sx), base.orange, foot, { seg: 'leg' + S, inkT: 0.007 });
   }
 
-  // -------------------------------------------------------------------------------- torso
   const torso = joint('torso', pelvis, 0, T.y, 0);
-  {
-    const g = pearGeometry(pear, WYw - TAIL, NYw + TAIL, D, torsoY, false, false, 128, (y) => Math.min(tuck(WYw - y), tuck(y - NYw)));
-    part('torso', g, base.body, torso, {
-      seg: 'torso',
-      hullMode: 'normals',
-      hullScale: (y) => {
-        const w = y + torsoY;
-        return clamp01((w - (WYw - TAIL)) / TAIL) * (1 - clamp01((w - NYw) / TAIL));
-      },
-    });
-  }
 
   // -------------------------------------------------------------------------------- flippers
   const creaseGroups = {};
@@ -1073,15 +1156,8 @@ export function createPengu(options = {}) {
     const hg = new THREE.SphereGeometry(1, 28, 20);
     hg.scale(H.rx, H.ry, H.rz);
     part('hand' + S, hg, base.blue, hand, { y: H.y, seg: 'fore' + S });
-    // Thumb nub: pivot on the flipper tip, pointing along +x (out of the tip when the flipper is stretched sideways,
-    // which is "up" in the thumbsUp pose). It scales to nothing in other poses.
-    const Th = C.thumb;
-    const thumb = joint('thumb' + S, hand, sx * Th.base[0], Th.base[1], Th.base[2]);
-    const tg = new THREE.CapsuleGeometry(Th.radius, Th.length, 6, 14);
-    tg.translate(0, Th.length / 2, 0);
-    tg.rotateZ((-sx * Math.PI) / 2);
-    part('thumb' + S, tg, base.blue, thumb, { seg: 'fore' + S, flesh: false, inkT: 0.0055 });
-    thumb.scale.setScalar(0.001);
+    // The thumb nub is gone with the thumbs-up pose; the joint stays as an empty group so nothing that names it breaks.
+    const thumb = joint('thumb' + S, hand, 0, 0, 0);
     thumb.visible = false;
     // (a flipper tip has no finger creases; the group stays for API compatibility)
     const cg = new THREE.Group();
@@ -1092,70 +1168,91 @@ export function createPengu(options = {}) {
     parts['creases' + S] = cg;
   }
 
-  // -------------------------------------------------------------------------------- head (the dome of the same bell)
   const neck = joint('neck', torso, 0, NYt, 0);
   const head = joint('head', neck, 0, 0, 0);
-  {
-    const g = pearGeometry(pear, NYw - TAIL, pear.yMax, D, NYw, false, true, 128, (y) => tuck(NYw - y));
-    part('head', g, base.body, head, {
-      seg: 'head',
-      hullMode: 'normals',
-      hullScale: (y) => clamp01((y + TAIL) / TAIL),
-    });
-  }
-  // Seam sleeves: a skin-coloured (same mask texture) band tucked just inside the skin at each seam, one riding on each
-  // side and reaching well into the other segment. At rest they are hidden inside the skin; when a joint bends far
-  // enough to open a gap between the two shells, the gap shows body colour instead of the black inside of the
-  // inverted ink hulls. No ink hull. They hide while the joint is severed or either neighbour has melted.
-  const sleeves = [];
-  const severedSeam = { waist: false, neck: false };
-  {
-    const REACH = 0.3;
-    const K0 = 0.93;
-    const K1 = 0.72;
-    const make = (seam, name, parent, frameY, seg, seamY, dir, segA, segB) => {
-      // dir +1: the band extends up from the seam (rides on the lower segment); -1: extends down (upper segment)
-      const ya = dir > 0 ? seamY - 0.1 : seamY - REACH;
-      const yb = dir > 0 ? seamY + REACH : seamY + 0.1;
-      const rs = (y) => K0 - (K0 - K1) * smooth01(0, REACH, dir * (y - seamY));
-      const g = pearGeometry(pear, ya, yb, D, frameY, false, false, 96, rs);
-      const m = part(name, g, base.body, parent, { seg, ink: false, flesh: false });
-      skinMeshes[skinMeshes.length - 1].noBox = true; // does not count toward the segment's melt extents
-      m.renderOrder = 0;
-      m.material.color.set(0xe3eaf6); // a touch of fold shadow so a bent-open gap reads as a skin crease, not a flat slab
-      sleeves.push({ mesh: m, seam, a: segA, b: segB });
-    };
-    make('waist', 'sleeveWaistUp', pelvis, C.pelvisY, 'pelvis', WYw, 1, 'pelvis', 'torso');
-    make('waist', 'sleeveWaistDown', torso, torsoY, 'torso', WYw, -1, 'pelvis', 'torso');
-    make('neck', 'sleeveNeckUp', torso, torsoY, 'torso', NYw, 1, 'torso', 'head');
-    make('neck', 'sleeveNeckDown', head, NYw, 'head', NYw, -1, 'torso', 'head');
-  }
-  const sealList = [];
-  // The interior seams (waist, neck) have no cap discs, so a melted-away skin would show black hollows: seal each with a
-  // flesh-coloured disc just inside the surface (hidden by the skin; it shows when the skin above or below is gone).
-  {
-    const sealMat = base.fleshInner.clone();
-    sealMat.side = THREE.DoubleSide;
-    const seal = (name, frame, yLocal, worldY) => {
-      const r = pear.rAt(worldY) * 0.965;
-      const g = new THREE.CircleGeometry(1, 40);
-      g.rotateX(-Math.PI / 2);
-      const m = new THREE.Mesh(g, sealMat);
-      m.name = name;
-      m.scale.set(r, 1, r * D);
-      m.position.set(0, yLocal, leanAt(worldY));
-      m.visible = false;
-      frame.add(m);
-      parts[name] = m;
-      return m;
-    };
-    sealList.push([seal('sealNeck', torso, NYt, NYw), 'torso', 'head'], [seal('sealWaist', torso, WY, WYw), 'pelvis', 'torso']);
-  }
-  // z of the head's front surface at (x, y) in head-frame coordinates
-  const headFrontZ = (x, y) => D * Math.sqrt(Math.max(0, pear.rAt(y + NYw) ** 2 - x * x)) + leanAt(y + NYw);
 
-  // Expression decal: a plane that follows the head's front surface, so it hugs the curved head with a tiny constant
-  // offset (no z-fighting).
+  // -------------------------------------------------------------------------------- the one-piece skinned body
+  // ONE continuous bell (head + torso + pelvis) skinned to 3 bones that ride on the pelvis / torso / head joint groups
+  // (so they follow the ragdoll segment groups every frame). Weights blend smoothly across the waist and the neck over
+  // 0.15 units. The ink hull is a second skinned mesh on the same skeleton and weights. The mask is part of the body's
+  // own texture. While the waist or neck is severed the weights turn hard at that seam (strip between the ring pair
+  // discarded in the shader) and the stump cap seals the cut.
+  const bonePelvis = new THREE.Bone();
+  const boneTorso = new THREE.Bone();
+  const boneHead = new THREE.Bone();
+  bonePelvis.name = 'bonePelvis';
+  boneTorso.name = 'boneTorso';
+  boneHead.name = 'boneHead';
+  pelvis.add(bonePelvis);
+  torso.add(boneTorso);
+  head.add(boneHead);
+  root.updateMatrixWorld(true);
+  const skeleton = new THREE.Skeleton([bonePelvis, boneTorso, boneHead]);
+
+  // Blend half-width. Wide and linear on purpose: a narrow smooth blend folds the skin over itself when a bend moves the front
+  // of the belly by more than the ring spacing (slope * lever arm * angle > 1).
+  const SEAM_H = 0.16;
+  const lin = (a, b, x) => Math.min(1, Math.max(0, (x - a) / (b - a)));
+  const bodyCut = { waist: { value: 0 }, neck: { value: 0 } };
+  const segW = (y) => {
+    const t1 = bodyCut.waist.value ? (y > WYw ? 1 : 0) : lin(WYw - SEAM_H, WYw + SEAM_H, y);
+    const t2 = bodyCut.neck.value ? (y > NYw ? 1 : 0) : lin(NYw - SEAM_H, NYw + SEAM_H, y);
+    return [1 - t1, t1 * (1 - t2), t2];
+  };
+  const makeSkin = (geo) => {
+    const p = geo.getAttribute('position');
+    const ys = new Float32Array(p.count);
+    for (let i = 0; i < p.count; i++) ys[i] = p.getY(i);
+    const idx = new Uint16Array(p.count * 4);
+    for (let i = 0; i < p.count; i++) idx.set([0, 1, 2, 0], i * 4);
+    const sk = { ys, idx: new THREE.BufferAttribute(idx, 4), w: new THREE.BufferAttribute(new Float32Array(p.count * 4), 4) };
+    geo.setAttribute('skinIndex', sk.idx);
+    geo.setAttribute('skinWeight', sk.w);
+    return sk;
+  };
+  const fillSkin = (sk) => {
+    for (let i = 0; i < sk.ys.length; i++) {
+      const [a, b, c] = segW(sk.ys[i]);
+      sk.w.array.set([a, b, c, 0], i * 4);
+    }
+    sk.w.needsUpdate = true;
+  };
+
+  const bodyGeo = pearGeometry(pear, pear.yMin, pear.yMax, D, 0, true, true, 128, null);
+  const bodySkin = makeSkin(bodyGeo);
+  fillSkin(bodySkin);
+  const hullGeo = hullFromNormals(bodyGeo, inkThickness(bodyGeo));
+  hullGeo.setAttribute('skinIndex', bodySkin.idx);
+  hullGeo.setAttribute('skinWeight', bodySkin.w);
+
+  const boxMin = (y0) => ({ value: new THREE.Vector3(-0.75, y0, -0.75) });
+  const boxMax = (y1) => ({ value: new THREE.Vector3(0.75, y1, 0.75) });
+  const faceMapU = { value: null };
+  const faceInfo = { phi: C.face.phi, y0: C.face.y0, y1: C.face.y1, depth: D, lean: C.body.lean };
+  const bodyU = {
+    uMeltV: { value: new THREE.Vector3() },
+    uSegMinP: boxMin(pear.yMin),
+    uSegMaxP: boxMax(WYw),
+    uSegMinT: boxMin(WYw),
+    uSegMaxT: boxMax(NYw),
+    uSegMinH: boxMin(NYw),
+    uSegMaxH: boxMax(pear.yMax),
+    uDirP: segState.pelvis.dir,
+    uDirT: segState.torso.dir,
+    uDirH: segState.head.dir,
+    uTime: timeU,
+    uMeltSize: { value: 0.9 },
+    uInset: { value: 0 },
+    uCutW: bodyCut.waist,
+    uCutN: bodyCut.neck,
+    uFaceMap: faceMapU,
+  };
+  const seamsY = [WYw, NYw];
+  const bodyMat = patchBody(base.body.clone(), 'SKIN', bodyU, seamsY, faceInfo);
+  const hullMat = patchBody(inkMat.clone(), 'INK', bodyU, seamsY, faceInfo);
+  const fleshMat = patchBody(base.fleshInner.clone(), 'FLESH', { ...bodyU, uInset: { value: 0.02 } }, seamsY, faceInfo);
+
+  // Expression patch texture (opaque: white background + the features, so it is a piece of the body's own surface)
   const CW = C.face.canvasW;
   const CH = Math.round((CW * C.face.h) / C.face.w);
   const faceCache = new Map();
@@ -1176,33 +1273,64 @@ export function createPengu(options = {}) {
     }
     return tex;
   };
-  const faceMat = new THREE.MeshBasicMaterial({
-    map: faceTexture('teary', false),
-    transparent: true,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
-    toneMapped: false,
-  });
-  const faceU = makeU('head', SEG_SIZE.head);
-  patchSkin(faceMat, 'DECAL', faceU);
+  faceMapU.value = faceTexture('teary', false);
+
+  const skinned = (name, geo, mat, order = 0) => {
+    const m = new THREE.SkinnedMesh(geo, mat);
+    m.name = name;
+    m.frustumCulled = false; // the bounding sphere is computed from the bind pose
+    m.renderOrder = order;
+    root.add(m);
+    m.bind(skeleton);
+    parts[name] = m;
+    return m;
+  };
+  const bodyMesh = skinned('body', bodyGeo, bodyMat);
+  const hullMesh = skinned('bodyInk', hullGeo, hullMat, -1);
+  const bodyFlesh = skinned('bodyFlesh', bodyGeo, fleshMat);
+  bodyFlesh.visible = false;
+  skinMats.push(bodyMat);
+  hullMeshes.push(hullMesh);
+  // legacy names: the three old segment meshes are all this one body now
+  parts.pelvis = parts.torso = parts.head = bodyMesh;
+  parts.pelvisInk = parts.torsoInk = parts.headInk = hullMesh;
+
+  // skinFor(seg): an invisible, NON-skinned rest-pose proxy of that segment's part of the body, parented to the segment's
+  // group (so anything attached to it, such as decals, rides the segment). Its geometry is in rest-world space and the
+  // mesh sits at minus the group's rest position, so mesh-local coordinates are the body's bind-space coordinates
+  // (which is what the shared skin material's blood-stain shader uses). It shares the body material.
+  const proxies = {};
   {
-    const fg = new THREE.PlaneGeometry(C.face.w, C.face.h, 96, 72);
-    const p = fg.getAttribute('position');
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i);
-      p.setZ(i, headFrontZ(x, C.face.cy + p.getY(i)) + 0.004);
+    const ix = bodyGeo.getIndex().array;
+    const bp = bodyGeo.getAttribute('position');
+    const lists = { pelvis: [], torso: [], head: [] };
+    for (let t = 0; t < ix.length; t += 3) {
+      const y = (bp.getY(ix[t]) + bp.getY(ix[t + 1]) + bp.getY(ix[t + 2])) / 3;
+      lists[y < WYw ? 'pelvis' : y < NYw ? 'torso' : 'head'].push(ix[t], ix[t + 1], ix[t + 2]);
     }
-    p.needsUpdate = true;
-    const faceMesh = new THREE.Mesh(fg, faceMat);
-    faceMesh.name = 'face';
-    faceMesh.position.set(0, C.face.cy, 0);
-    faceMesh.renderOrder = 2;
-    head.add(faceMesh);
-    parts.face = faceMesh;
-    skinMeshes.push({ seg: 'head', mesh: faceMesh, U: faceU, noBox: true }); // same melt displacement as the head
+    const groups = { pelvis, torso, head: neck };
+    root.updateMatrixWorld(true);
+    for (const seg of ['pelvis', 'torso', 'head']) {
+      const g = new THREE.BufferGeometry();
+      for (const a of ['position', 'normal', 'uv']) g.setAttribute(a, bodyGeo.getAttribute(a));
+      g.setIndex(lists[seg]);
+      g.computeBoundingBox(); // gore.js reads these (it only computes them for the first mesh that shares a material)
+      g.computeBoundingSphere();
+      const m = new THREE.Mesh(g, bodyMat);
+      m.name = 'bodyProxy_' + seg;
+      m.visible = false;
+      m.position.copy(groups[seg].getWorldPosition(new THREE.Vector3())).multiplyScalar(-1);
+      groups[seg].add(m);
+      proxies[seg] = m;
+    }
   }
+
+  // Seam severing: weights go hard at the seam and the strip between the ring pair is discarded (see the shaders).
+  const setBodyCut = (kind, on) => {
+    if (bodyCut[kind].value === (on ? 1 : 0)) return;
+    bodyCut[kind].value = on ? 1 : 0;
+    fillSkin(bodySkin);
+  };
 
   // -------------------------------------------------------------------------------- beak
   // joints.beak is a pivot at the beak root (scale it along z to stretch the beak). It carries the upper beak
@@ -1251,22 +1379,22 @@ export function createPengu(options = {}) {
   })();
 
   // -------------------------------------------------------------------------------- crest
-  // Three little feathers on their own pivot, so the crest wobbles. (Not skin: it rides the skull when the head melts.)
+  // Three plump, rounded feather lobes (little petals) on their own pivot, so the crest wobbles. A rigid child of the
+  // head (not skin: it rides the skull when the head melts).
   const crest = joint('crest', head, 0, C.crest.y, C.crest.z + leanAt(NYw + C.crest.y));
   {
     const specs = [
-      { name: 'crestC', len: 0.15, w: 1.1, x: 0, rz: 0, rx: 0.42, bx: 0, bz: 0.03 },
-      { name: 'crestL', len: 0.125, w: 1.0, x: 0.04, rz: -0.7, rx: 0.34, bx: -0.01, bz: 0.02 },
-      { name: 'crestR', len: 0.125, w: 1.0, x: -0.04, rz: 0.7, rx: 0.34, bx: 0.01, bz: 0.02 },
+      { name: 'crestC', len: 0.135, rx: 0.052, rz: 0.046, x: 0, rz0: 0, rx0: 0.42, bz: 0.03 },
+      { name: 'crestL', len: 0.11, rx: 0.046, rz: 0.042, x: 0.05, rz0: -0.78, rx0: 0.3, bz: 0.02 },
+      { name: 'crestR', len: 0.11, rx: 0.046, rz: 0.042, x: -0.05, rz0: 0.78, rx0: 0.3, bz: 0.02 },
     ];
-    for (const s of specs) {
+    for (const sp of specs) {
       const grp = new THREE.Group();
-      grp.name = s.name + 'Pivot';
-      grp.position.set(s.x, 0, 0);
-      grp.rotation.set(s.rx, 0, s.rz, 'ZXY');
+      grp.name = sp.name + 'Pivot';
+      grp.position.set(sp.x, 0, 0);
+      grp.rotation.set(sp.rx0, 0, sp.rz0, 'ZXY');
       crest.add(grp);
-      // L is +x: bend its tip outward (+x); the geometry is built for +x bends, so mirror through bx's sign
-      part(s.name, featherGeometry(s.len, s.w, s.bx, s.bz), base.blue, grp, { inkT: 0.0045 });
+      part(sp.name, lobeGeometry(sp.len, sp.rx, sp.rz, sp.bz), base.blue, grp, { inkT: 0.0045 });
     }
     parts.crest = crest;
   }
@@ -1623,7 +1751,7 @@ export function createPengu(options = {}) {
   const organInk = {};
   let organUid = 0;
   const glossList = [];
-  const glossMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false });
+  const glossMat = new THREE.MeshBasicMaterial({ color: 0xffffff, });
   const organMeshOf = (geo, color, seg, inkT = 0.008, gloss = true) => {
     const U = makeU(seg, 0.3);
     const uid = organUid++;
@@ -1775,8 +1903,8 @@ export function createPengu(options = {}) {
     switch (kind) {
       case 'neck':
         return {
-          child: { frame: neck, pos: [0, -0.003, 0], n: [0, -1, 0], R: neckR * 0.99, cut: ['head', 'a', [0, -1, 0], 0] },
-          parent: { frame: torso, pos: [0, NYt + 0.003, 0], n: [0, 1, 0], R: neckR * 0.99, cut: ['torso', 'b', [0, 1, 0], NYt] },
+          child: { frame: neck, pos: [0, -0.003, leanAt(NYw)], n: [0, -1, 0], R: neckR * 0.99 },
+          parent: { frame: torso, pos: [0, NYt + 0.003, leanAt(NYw)], n: [0, 1, 0], R: neckR * 0.99 },
         };
       case 'shoulder':
         return {
@@ -1803,10 +1931,10 @@ export function createPengu(options = {}) {
           child: { frame: joints['leg' + S], pos: [0, 0.003, 0], n: [0, 1, 0], R: C.leg.radius * 1.0, cut: ['leg' + S, 'a', [0, 1, 0], 0] },
           parent: { frame: pelvis, pos: [sx * C.hip.x, yHip - C.pelvisY - 0.004, 0], n: [sx * 0.4, -1, 0], R: C.leg.radius * 0.95 },
         };
-      default: // waist: both meshes overlap a little, the cut planes trim the overlap
+      default: // waist: the skinned body tears at the seam; the stump caps seal both cut rings
         return {
-          child: { frame: torso, pos: [0, WY - 0.003, 0], n: [0, -1, 0], R: waistR, cut: ['torso', 'a', [0, -1, 0], -WY] },
-          parent: { frame: pelvis, pos: [0, WY + C.torso.y + 0.003, 0], n: [0, 1, 0], R: waistR, cut: ['pelvis', 'a', [0, 1, 0], WY + C.torso.y] },
+          child: { frame: torso, pos: [0, WY - 0.003, leanAt(WYw)], n: [0, -1, 0], R: waistR },
+          parent: { frame: pelvis, pos: [0, WY + C.torso.y + 0.003, leanAt(WYw)], n: [0, 1, 0], R: waistR },
         };
     }
   };
@@ -1956,10 +2084,7 @@ export function createPengu(options = {}) {
       cutSet(def.cut[0], def.cut[1], def.cut[2], def.cut[3]);
       if (def.elbow) elbowParentCut[def.elbow] = true;
     }
-    if (kind0 === 'waist' || kind0 === 'neck') {
-      severedSeam[kind0] = true;
-      syncSeals();
-    }
+    if (kind0 === 'waist' || kind0 === 'neck') setBodyCut(kind0, true);
     g.userData.frame = def.frame;
     return g;
   }
@@ -2218,6 +2343,17 @@ export function createPengu(options = {}) {
     }
   }
 
+  // the body is one skinned mesh now: give the pelvis / torso / head segments explicit melt boxes (segment frames) for the
+  // limb-style parts that still use them (beak, organs, crest drop)
+  const bodyBoxes = () => {
+    const box = (seg, y0, y1) => {
+      segState[seg].min.value.set(-0.75, y0, -0.75);
+      segState[seg].max.value.set(0.75, y1, 0.75);
+    };
+    box('pelvis', pear.yMin - C.pelvisY, WYw - C.pelvisY);
+    box('torso', WYw - torsoY, NYw - torsoY);
+    box('head', 0, pear.yMax - NYw);
+  };
   let meltActive = false;
   const crestDrop = () => {
     const st = segState.head;
@@ -2257,7 +2393,7 @@ export function createPengu(options = {}) {
 
   function applyExpressionTexture() {
     const blink = state.blinkLeft > 0 && BLINKABLE.has(state.expression);
-    faceMat.map = faceTexture(state.expression, blink);
+    faceMapU.value = faceTexture(state.expression, blink);
   }
 
   // The 3D beak follows the expression: the lower beak hangs open and the tongue sticks out. Both ease toward their
@@ -2301,11 +2437,7 @@ export function createPengu(options = {}) {
       }
     }
     ['L', 'R'].forEach((S, i) => {
-      const a = state.thumb[i];
-      const th = joints['thumb' + S];
-      th.visible = a > 0.02;
-      th.scale.setScalar(Math.max(0.001, a));
-      creaseGroups[S].visible = a > 0.5;
+      joints['thumb' + S].visible = false; // no thumb (the thumbs-up pose is gone)
       // Rubber-arm gag: stretch the arm meshes and move the elbow/hand pivots with them (joints stay rigid).
       const s = state.stretch[i];
       applyStretch('arm' + S, s);
@@ -2318,7 +2450,7 @@ export function createPengu(options = {}) {
   }
 
   function setPose(name, instant = false) {
-    if (!poses[name]) throw new Error(`Unknown pose: ${name}`);
+    if (!poses[name]) name = 'idle'; // removed poses (thumbsUp) fall back to idle instead of throwing
     state.pose = name;
     if (instant) {
       const p = poses[name];
@@ -2444,7 +2576,7 @@ export function createPengu(options = {}) {
 
     // breathing: scale the torso mesh only (children keep their size)
     const b = state.life ? Math.sin(t * 2.1) * pose.life : 0;
-    parts.torso.scale.set(1 + 0.012 * b, 1 + 0.02 * b, 1 + 0.012 * b);
+    boneTorso.scale.set(1 + 0.012 * b, 1 + 0.02 * b, 1 + 0.012 * b);
   }
 
   // -------------------------------------------------------------------------------- gore controls
@@ -2484,11 +2616,6 @@ export function createPengu(options = {}) {
     if (seg === 'head') syncTongue();
     for (const { gm, seg: gs } of glossList) if (gs === seg) gm.visible = st.amount.value < 0.02;
   };
-  // a seal shows only while exactly one of the two segments at that seam has lost its skin (and not in x-ray)
-  const syncSeals = () => {
-    for (const sl of sleeves) sl.mesh.visible = !severedSeam[sl.seam] && segState[sl.a].amount.value < 0.5 && segState[sl.b].amount.value < 0.5;
-    for (const [m, a, b] of sealList) m.visible = !state.xray && segState[a].amount.value > 0.6 !== segState[b].amount.value > 0.6;
-  };
   const segList = (seg) => (seg === 'all' ? SEG_NAMES : [seg]);
   function showBones(seg, on = true) {
     for (const s of segList(seg)) {
@@ -2511,7 +2638,8 @@ export function createPengu(options = {}) {
       }
       refreshInner(s);
     }
-    syncSeals();
+    bodyU.uMeltV.value.set(segState.pelvis.amount.value, segState.torso.amount.value, segState.head.amount.value);
+    bodyFlesh.visible = Math.max(segState.pelvis.amount.value, segState.torso.amount.value, segState.head.amount.value) > 0.5;
     meltActive = SEG_NAMES.some((n) => segState[n].amount.value > 0.001);
     joints.crest.position.y = restPos.crest.pos.y + state.curPos.crest[1] - crestDrop();
     layoutDrips(state.t, 0);
@@ -2519,7 +2647,6 @@ export function createPengu(options = {}) {
   // X-ray: skins turn semi-transparent (and lose their ink hulls) so bones and organs read.
   function setXray(on) {
     state.xray = !!on;
-    syncSeals();
     for (const m of skinMats) {
       m.transparent = !!on;
       m.opacity = on ? 0.3 : 1;
@@ -2527,7 +2654,6 @@ export function createPengu(options = {}) {
       m.needsUpdate = true;
     }
     for (const h of hullMeshes) h.visible = !on;
-    faceMat.opacity = on ? 0.35 : 1;
     // bones and organs join the transparent pass, sorted after the skin, so they stay crisp
     const trans = [...boneMats, ...Object.values(organMats), ...Object.values(organInk)];
     for (const m of trans) {
@@ -2556,13 +2682,14 @@ export function createPengu(options = {}) {
   }
   function clearStumps() {
     cutClear();
-    severedSeam.waist = severedSeam.neck = false;
-    syncSeals();
+    setBodyCut('waist', false);
+    setBodyCut('neck', false);
   }
 
   setPose('idle', true);
   setExpression('teary');
   finalizeMelt(segments);
+  bodyBoxes();
 
   const api = {
     root,
@@ -2582,6 +2709,7 @@ export function createPengu(options = {}) {
     showOrgans,
     makeStump,
     clearStumps,
+    skinFor: (seg) => proxies[seg] || null,
     setMelt,
     setXray,
     // Set to false when a physics/ragdoll system drives the joints directly.
@@ -2594,7 +2722,7 @@ export function createPengu(options = {}) {
       if (!on) {
         state.blinkLeft = 0;
         applyExpressionTexture();
-        parts.torso.scale.set(1, 1, 1);
+        boneTorso.scale.set(1, 1, 1);
       }
     },
     get pose() {

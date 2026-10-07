@@ -13,8 +13,8 @@ const SEG_JOINT = {
 // Impulse joints. kp/kd are angular accelerations (1 / s^2, 1 / s) of the joint "muscle";
 // limit is the soft cone limit in radians away from the rest orientation.
 const JOINTS = {
-  neck: { parent: 'torso', child: 'head', at: 'neck', kp: 900, kd: 40, limit: 0.42 }, // penguin: one pear body, keep seams closed
-  waist: { parent: 'pelvis', child: 'torso', at: 'torso', kp: 1500, kd: 60, limit: 0.2 },
+  neck: { parent: 'torso', child: 'head', at: 'neck', kp: 700, kd: 36, limit: 0.42, limitK: 3 }, // penguin: one pear body, keep seams closed
+  waist: { parent: 'pelvis', child: 'torso', at: 'torso', kp: 1000, kd: 44, limit: 0.2, limitK: 3 },
   shoulderL: { parent: 'torso', child: 'armL', at: 'shoulderL', kp: 260, kd: 15, limit: 2.3 },
   shoulderR: { parent: 'torso', child: 'armR', at: 'shoulderR', kp: 260, kd: 15, limit: 2.3 },
   elbowL: { parent: 'armL', child: 'foreL', at: 'elbowL', kp: 260, kd: 13, limit: 1.5 },
@@ -36,6 +36,8 @@ const BLOB = {
   foreL: { radius: 0.17, strength: 0.4 },
   foreR: { radius: 0.17, strength: 0.4 },
 };
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
 export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, events }) {
   const world = physics.world;
@@ -133,28 +135,29 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
   addCollider('head', RAPIER.ColliderDesc.ball(0.14), localIn('head', joints.crest, 0, 0.08, 0), { part: 'crest', sensor: true });
 
   // torso and pelvis: wide, soft belly boxes
-  bodyFor('torso');
-  {
-    // The pickable collider is narrower than the visible belly on purpose: the flippers hang along its sides and
-    // must stay clickable. A wide collider that collides with nothing keeps the belly's mass and inertia, so the
-    // balance muscles feel the same as with the full-width shape.
-    const t0 = CH.torso || { center: [0, 0.3, 0], half: [0.34, 0.2, 0.3], r: 0.2 };
-    const narrow = { ...t0, half: [Math.min(t0.half[0], 0.23), t0.half[1], t0.half[2]] };
-    const fr = localIn('torso', joints.torso, t0.center[0], t0.center[1], t0.center[2]);
-    addCollider('torso', box(narrow), fr, { mass: MASS.torso * 0.5, part: 'torso' });
-    const ghost = box(t0)
+  // The colliding box of the torso and pelvis is slimmer than the visible belly on purpose: the flippers hang along
+  // its sides and must stay clickable, and the spilled intestines should hang along the belly, not inside a collider.
+  // A full-size ghost collider (it collides with nothing) keeps the belly's mass and inertia, so the balance muscles
+  // feel the same as with the full-width shape.
+  function slimBody(seg, jointName, c0, slim, mass, part) {
+    const narrow = { ...c0, half: [Math.min(c0.half[0], slim.x), c0.half[1], Math.min(c0.half[2], slim.z)] };
+    const fr = localIn(seg, joints[jointName], c0.center[0], c0.center[1], c0.center[2]);
+    addCollider(seg, box(narrow), fr, { mass: mass * 0.5, part });
+    const ghost = box(c0)
       .setTranslation(fr.t.x, fr.t.y, fr.t.z)
       .setRotation({ x: fr.q.x, y: fr.q.y, z: fr.q.z, w: fr.q.w })
-      .setMass(MASS.torso * 0.5)
-      .setCollisionGroups(groups(MEMBER.torso, 0));
-    const gc = world.createCollider(ghost, bodies.torso);
-    physics.tag(gc, { kind: 'ghost', seg: 'torso', part: null }); // never picked or hit (its filter is empty)
-    colliders.torso.push(gc);
+      .setMass(mass * 0.5)
+      .setCollisionGroups(groups(MEMBER[seg], 0));
+    const gc = world.createCollider(ghost, bodies[seg]);
+    physics.tag(gc, { kind: 'ghost', seg, part: null }); // never picked or hit (its filter is empty)
+    colliders[seg].push(gc);
   }
+  bodyFor('torso');
+  slimBody('torso', 'torso', CH.torso || { center: [0, 0.3, 0], half: [0.34, 0.2, 0.3], r: 0.2 }, { x: 0.23, z: 0.3 }, MASS.torso, 'torso');
   bodyFor('pelvis');
   {
-    const c = CH.pelvis || { center: [0, -0.06, 0], half: [0.34, 0.07, 0.3], r: 0.17 };
-    addCollider('pelvis', box(c), localIn('pelvis', joints.pelvis, c.center[0], c.center[1], c.center[2]), { mass: MASS.pelvis, part: 'pelvis' });
+    const p0 = CH.pelvis || { center: [0, -0.06, 0], half: [0.34, 0.07, 0.3], r: 0.17 };
+    slimBody('pelvis', 'pelvis', p0, { x: p0.half[0], z: p0.r + 0.02 }, MASS.pelvis, 'pelvis');
   }
 
   // short flippers and stubby legs with flat feet
@@ -236,9 +239,8 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
     recover: 1, // 0..1 balance ramp
     holdLimp: 0, // > 0 while something (a grab) holds him
     standingOK: true,
-    armPose: { L: null, R: null },
   };
-  const tune = { sway: 1, support: 1, upright: 1, yaw: 1, muscle: 1 };
+  const tune = { sway: 0.2, support: 1, upright: 1, yaw: 1, muscle: 1 };
 
   // Secondary motion: the crest feathers lag behind the head like soft toys.
   const flop = { last: null, lv: new V3(), crest: { x: 0, vx: 0, z: 0, vz: 0 } };
@@ -315,7 +317,7 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
     const over = Math.max(0, angle - info.limit);
     const kp = info.kp * stiff;
     const kd = info.kd * Math.sqrt(stiff);
-    const mag = kp * angle + kp * 9 * over;
+    const mag = kp * angle + kp * (info.limitK ?? 9) * over;
     const dk = kd * (1 + (over > 0 ? 2 : 0));
     const ax = -(rv.x * mag) - dk * rw.x;
     const ay = -(rv.y * mag) - dk * rw.y;
@@ -483,8 +485,6 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
     sever(joint) {
       const info = jointInfo[joint];
       if (!info || severed[joint]) return null;
-      // A posed (thumbs-up) arm has to be back on its joints before it is cut.
-      for (const S of ['L', 'R']) if (joint.endsWith(S) && state.armPose[S]) ragdoll.releaseArm(S, true);
       severed[joint] = true;
       try {
         world.removeImpulseJoint(jointObjs[joint], true);
@@ -543,52 +543,6 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
       };
     },
 
-    // -------------------------------------------------------------- arm pose (thumbs-up beat)
-    // Hands the arm over to the model's pose system: kinematic bodies follow the posed arm.
-    poseArm(side = 'L', pose = 'thumbsUp') {
-      const S = side;
-      if (state.armPose[S]) return true;
-      if (severed['shoulder' + S] || severed['elbow' + S]) return false;
-      const armG = segGroups['arm' + S];
-      const foreG = segGroups['fore' + S];
-      for (const name of ['shoulder' + S, 'elbow' + S]) {
-        try {
-          world.removeImpulseJoint(jointObjs[name], true);
-        } catch {
-          /* ignore */
-        }
-        jointObjs[name] = null;
-      }
-      for (const seg of ['arm' + S, 'fore' + S]) {
-        bodies[seg].setEnabled(false);
-        const g = segGroups[seg];
-        g.matrixAutoUpdate = true;
-        g.scale.set(1, 1, 1);
-      }
-      joints['shoulder' + S].add(armG);
-      armG.position.set(0, 0, 0);
-      armG.quaternion.identity();
-      armG.add(foreG);
-      pengu.setPoseControl(true);
-      pengu.setPose(pose);
-      state.armPose[S] = { pose, releasing: 0, t: 0 };
-      return true;
-    },
-    releaseArm(side = 'L', immediate = false) {
-      const ap = state.armPose[side];
-      if (!ap) return;
-      if (immediate) {
-        finishRelease(side);
-        return;
-      }
-      if (ap.releasing > 0) return;
-      ap.releasing = 0.42;
-      pengu.setPose('idle');
-    },
-    get armPosed() {
-      return !!(state.armPose.L || state.armPose.R);
-    },
-
     // -------------------------------------------------------------- per-step / per-frame
     preStep(h) {
       state.t += h;
@@ -627,7 +581,6 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
       for (const name of Object.keys(JOINTS)) {
         if (severed[name]) continue;
         if (tune.only && !tune.only.includes(name)) continue;
-        if ((name.endsWith('L') || name.endsWith('R')) && state.armPose[name.slice(-1)] && /^(shoulder|elbow)/.test(name)) continue;
         jointMuscle(name, stiff * tune.muscle, h);
       }
 
@@ -649,7 +602,9 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
         const total = 7 * 13;
         const err = 0.33 - py;
         if (err > 0.01 && tune.support > 0) {
-          const f = Math.min(err * 40, 1.0) * total * 0.5 * gain * tune.support;
+          // no extra push while he is already rising (it made a spring with no damping: a small tug started a hop)
+          const rise = clamp01(1 - pb.linvel().y / 0.5);
+          const f = Math.min(err * 40, 1.0) * total * 0.5 * gain * tune.support * rise;
           pb.applyImpulse({ x: 0, y: f * h, z: 0 }, true);
         }
       }
@@ -689,13 +644,8 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
       for (const s of SEGMENTS) {
         const b = bodies[s];
         const g = segGroups[s];
-        const armPosed = (s.endsWith('L') && state.armPose.L && (s === 'armL' || s === 'foreL')) || (s.endsWith('R') && state.armPose.R && (s === 'armR' || s === 'foreR'));
         const t = b.translation();
         const r = b.rotation();
-        if (armPosed) {
-          if (blobs[s]) blobs[s].mesh.visible = false;
-          continue;
-        }
         if (blobs[s]) blobs[s].update(t.x, t.y, t.z);
         g.position.set(t.x, t.y, t.z);
         g.quaternion.set(r.x, r.y, r.z, r.w);
@@ -727,24 +677,6 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
           }
         }
         g.matrixWorldNeedsUpdate = true;
-      }
-      // posed arms: the model's pose system drives them (their bodies are disabled meanwhile)
-      for (const S of ['L', 'R']) {
-        const ap = state.armPose[S];
-        if (!ap) continue;
-        ap.t += dt;
-        // trembling while the beat is held
-        if (ap.pose === 'thumbsUp' && ap.releasing <= 0 && ap.t > 0.25) {
-          const sh = joints['shoulder' + S];
-          const w = ap.t * 37;
-          sh.rotation.z += Math.sin(w) * 0.022;
-          sh.rotation.x += Math.sin(w * 1.3 + 1) * 0.02;
-          joints['hand' + S].rotation.z += Math.sin(w * 1.7) * 0.05;
-        }
-        if (ap.releasing > 0) {
-          ap.releasing -= dt;
-          if (ap.releasing <= 0) finishRelease(S);
-        }
       }
     },
 
@@ -779,39 +711,6 @@ export function createRagdoll({ THREE, RAPIER, physics, scene, room, pengu, even
       container.parent?.remove(container);
     },
   };
-
-  function finishRelease(S) {
-    const ap = state.armPose[S];
-    if (!ap) return;
-    // Put the groups back into the flat container, keeping their world transforms.
-    for (const seg of ['arm' + S, 'fore' + S]) {
-      const g = segGroups[seg];
-      g.updateWorldMatrix(true, false);
-      container.attach(g);
-      g.matrixAutoUpdate = false;
-    }
-    const tb = bodies.torso;
-    const lv = tb.linvel();
-    for (const seg of ['arm' + S, 'fore' + S]) {
-      const g = segGroups[seg];
-      const p = worldPos(g);
-      const q = worldQuat(g);
-      const b = bodies[seg];
-      b.setEnabled(true);
-      b.setTranslation({ x: p.x, y: p.y, z: p.z }, true);
-      b.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
-      b.setLinvel({ x: lv.x, y: lv.y, z: lv.z }, true);
-      b.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    }
-    for (const name of ['shoulder' + S, 'elbow' + S]) {
-      if (!severed[name]) makeJoint(name);
-    }
-    state.armPose[S] = null;
-    if (!state.armPose.L && !state.armPose.R) {
-      pengu.setPose('idle', true);
-      pengu.setPoseControl(false);
-    }
-  }
 
   return ragdoll;
 }

@@ -306,7 +306,7 @@ export async function createGame({ canvas }) {
   }
 
   // ------------------------------------------------------------------ events -> reactions, coins
-  const beat = { active: false, lastDamage: -1, calmSince: 0 };
+  const beat = { active: false, lastDamage: -1, sniffle: 0 };
   const COIN_MULT = { blunt: 1, cut: 1.4, stab: 1.4, burn: 1.6, blast: 2, tickle: 0.6 };
   let coinBuffer = 0;
   let coinTimer = 0;
@@ -379,26 +379,35 @@ export async function createGame({ canvas }) {
     }
   });
 
-  // ------------------------------------------------------------------ thumbs-up beat
+  // ------------------------------------------------------------------ calm teary beat
+  // Once he has been calm for 2 s after damage he just stands there crying, with a small sniffle now and then.
   function endBeat() {
-    if (!beat.active) return;
     beat.active = false;
-    game.ragdoll?.releaseArm('L');
+    beat.sniffle = 0;
   }
-  function updateBeat() {
+  function updateBeat(dt = 1 / 60) {
     const r = game.ragdoll;
     if (beat.active) {
-      if (!r.standing || r.isSevered('shoulderL') || r.isSevered('elbowL')) endBeat();
+      if (!r.standing || r.isSevered('neck')) {
+        endBeat();
+        return;
+      }
+      beat.sniffle -= dt;
+      if (beat.sniffle <= 0) {
+        // a tiny shoulder bob: a little hop of the torso, a soft whimper
+        beat.sniffle = 2.4 + Math.random() * 1.6;
+        const tb = r.bodies.torso;
+        tb.applyImpulse({ x: 0, y: 0.25 * tb.mass(), z: 0 }, true);
+        audio.play('whimper', { gain: 0.25 });
+      }
       return;
     }
     if (beat.lastDamage < 0 || game.time - beat.lastDamage < 2) return;
-    if (!r.standing || r.armPosed || r.isSevered('shoulderL') || r.isSevered('elbowL') || r.isSevered('neck')) return;
-    if (game.grabbed) return;
-    if (r.poseArm('L', 'thumbsUp')) {
-      beat.active = true;
-      game.react('teary', Infinity, 10);
-      audio.play('whimper', { gain: 0.6 });
-    }
+    if (!r.standing || r.isSevered('neck') || game.grabbed) return;
+    beat.active = true;
+    beat.sniffle = 0.6;
+    game.react('teary', Infinity, 10);
+    audio.play('whimper', { gain: 0.6 });
   }
 
   // ------------------------------------------------------------------ tools
@@ -623,7 +632,7 @@ export async function createGame({ canvas }) {
     game.pengu.update(dt);
     r.sync(dt);
     physics.syncProps(dt);
-    updateBeat();
+    updateBeat(dt);
     updateFace();
     if (coinTimer > 0) {
       coinTimer -= dt;

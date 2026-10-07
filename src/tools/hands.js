@@ -82,49 +82,13 @@ function makeCursor(game, emoji, { size = 46, rot = 0, ox = 0.5, oy = 0.5 } = {}
   return c;
 }
 
-// --------------------------------------------------------------------------------- hand print flash
-function makePrintTexture(THREE) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  // A flipper print (a tilted paddle), not a human hand.
-  g.translate(128, 128);
-  g.rotate(-0.55);
-  g.fillStyle = 'rgba(255,70,90,0.85)';
-  g.beginPath();
-  g.moveTo(-10, -104);
-  g.bezierCurveTo(40, -104, 66, -50, 62, 10);
-  g.bezierCurveTo(58, 70, 34, 108, 4, 108);
-  g.bezierCurveTo(-26, 108, -36, 78, -36, 46);
-  g.bezierCurveTo(-36, 6, -66, -22, -64, -58);
-  g.bezierCurveTo(-62, -92, -40, -104, -10, -104);
-  g.fill();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 // --------------------------------------------------------------------------------- shared state
 const S = {
-  printTex: null,
-  prints: [],
   cursors: {},
 };
 
 function bodyMass(game, seg) {
   return game.ragdoll.bodies[seg].mass();
-}
-
-function spawnPrint(game, point, normal) {
-  const THREE = game.THREE;
-  if (!S.printTex) S.printTex = makePrintTexture(THREE);
-  const mat = new THREE.SpriteMaterial({ map: S.printTex, transparent: true, depthWrite: false, opacity: 0.95 });
-  const sp = new THREE.Sprite(mat);
-  sp.scale.set(0.5, 0.5, 1);
-  sp.position.copy(point).addScaledVector(normal, 0.04);
-  sp.renderOrder = 20;
-  game.scene.add(sp);
-  S.prints.push({ sp, t: 0 });
 }
 
 // ================================================================================= GRAB & THROW
@@ -323,7 +287,11 @@ const slapTool = {
     } else {
       hit.prop.body.applyImpulseAtPoint({ x: push.x * 2, y: push.y * 2, z: push.z * 2 }, hit.point, true);
     }
-    spawnPrint(game, hit.point.clone(), hit.normal.clone());
+    if (hit.seg) {
+      // a quick squash and a little burst of stars (the bruise itself comes from the damage event)
+      game.ragdoll.squash(hit.seg, hit.normal, 0.16);
+      if (game.gore?.cleanFX) game.gore.cleanFX(hit.point.clone(), hit.normal.clone(), 0.45);
+    }
     void THREE;
   },
 };
@@ -807,30 +775,13 @@ const crestTool = {
 // ================================================================================= frame updates
 export const tools = [grabTool, slapTool, pokeTool, tickleTool, beakTool, crestTool];
 
-// Things that must keep running whichever tool is selected: hand prints and the beak snap-back.
+// Things that must keep running whichever tool is selected: the beak snap-back.
 const installed = new WeakSet();
 function installGlobal(game) {
   if (installed.has(game)) return;
   installed.add(game);
   game.addUpdate((dt) => {
-    for (const pr of S.prints) {
-      pr.t += dt;
-      const u = pr.t / 0.45;
-      pr.sp.material.opacity = Math.max(0, 0.95 * (1 - u * u));
-      const s = 0.5 + Math.min(1, u * 3) * 0.12;
-      pr.sp.scale.set(s, s, 1);
-      if (u >= 1) {
-        game.scene.remove(pr.sp);
-        pr.sp.material.dispose();
-        pr.dead = true;
-      }
-    }
-    S.prints = S.prints.filter((p) => !p.dead);
     beakTool.stepSprings(game, dt);
-  });
-  game.events.on('beforereset', () => {
-    for (const pr of S.prints) game.scene.remove(pr.sp);
-    S.prints = [];
   });
 }
 const grabInit = grabTool.init;
